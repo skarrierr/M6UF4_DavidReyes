@@ -1,7 +1,7 @@
 {
   "name": "m6uf4_davidreyes",
   "version": "1.0.0",
-  "description": "Juego Pong multijugador con Phaser 3 y WebSockets",
+  "description": "Juego Pong multijugador con Phaser 3 y WebSockets ",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
