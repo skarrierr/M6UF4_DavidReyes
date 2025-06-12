@@ -7,137 +7,97 @@
   <script>
 const WS_URL = 'ws://' + location.hostname + ':7777';
 let ws = new WebSocket(WS_URL);
-let player_num = 0;
-let isSpectator = false;
-let game_start = false;
-let game_over = false;
-let win_w = 800, win_h = 450;
-let game = new Phaser.Game({
-  type: Phaser.AUTO,
-  width: win_w,
-  height: win_h,
-  scene: { preload, create, update }
-});
-let player1, player2;
-let player1_x = 32, player1_y = 225;
-let player2_x = 768, player2_y = 225;
-let players_w = 16, players_h = 96;
-let player1_score = 0, player2_score = 0;
-let player1_score_text, player2_score_text;
-let ball, ball_x_init = 400, ball_y_init = 225;
-let ball_x = ball_x_init, ball_y = ball_y_init;
-let ball_w = 16, ball_h = 16;
-let ball_x_dir = 1, ball_y_dir = 1;
-let game_over_text;
 
-ws.onmessage = function (msg) {
-  let data = JSON.parse(msg.data);
-  if (data.player_num != null) {
-    player_num = data.player_num;
-  } else if (data.spectator != null) {
-    isSpectator = true;
-  } else if (data.game_start != null) {
-    game_start = true;
-  } else if (data.y != null) {
-    if (player_num == 1) player2.y = data.y;
-    else if (player_num == 2) player1.y = data.y;
-  } else if (data.by != null) {
-    ball.x = data.bx;
-    ball.y = data.by;
-  } else if (data.score1 != null) {
-    player1_score = data.score1;
-    player1_score_text.setText(player1_score);
-    player2_score = data.score2;
-    player2_score_text.setText(player2_score);
-  } else if (data.game_over != null) {
+let player_num = 0, isSpectator = false;
+let game_start = false, game_over = false;
+const winW = 800, winH = 450, paddleW = 16, paddleH = 96, ballSize = 16;
+let player1, player2, ball, p1Text, p2Text, gameOverText, cursors;
+let ballDir = { x: 0, y: 0 }, speed = 4;
+let p1Score = 0, p2Score = 0;
+let mainScene;
+
+ws.onmessage = ({ data }) => {
+  const msg = JSON.parse(data);
+  if (msg.player_num != null) player_num = msg.player_num;
+  else if (msg.spectator) isSpectator = true;
+  else if (msg.game_start) { game_start = true; resetBall(); }
+  else if (msg.player1_y != null) player1.y = msg.player1_y;
+  else if (msg.player2_y != null) player2.y = msg.player2_y;
+  else if (msg.bx != null && msg.by != null) {
+    ball.x = msg.bx; ball.y = msg.by;
+  }
+  else if (msg.score1 != null) {
+    p1Score = msg.score1; p1Text.setText(p1Score);
+    p2Score = msg.score2; p2Text.setText(p2Score);
+  }
+  else if (msg.disconnected) {
+    gameOverText.setText(`El jugador ${msg.player_num} se ha desconectado`).setColor('#ff8800');
     game_over = true;
-    if (isSpectator) {
-      game_over_text.setText("Ha ganado el jugador " + data.winner);
-      game_over_text.setColor("#ffff00");
-    } else if (data.winner == player_num) {
-      game_over_text.setText("¡Has ganado!");
-      game_over_text.setColor("#00ff00");
+  }
+  else if (msg.game_over) {
+    game_over = true;
+    if (isSpectator && msg.spectator_msg) {
+      gameOverText.setText(msg.spectator_msg).setColor('#ffff00');
     } else {
-      game_over_text.setText("Has perdido");
-      game_over_text.setColor("#ff0000");
+      const win = msg.winner === player_num;
+      gameOverText.setText(win ? '¡Has ganado!' : 'Has perdido').setColor(win ? '#00ff00' : '#ff0000');
     }
-  } else if (data.player_left != null && !game_over) {
-    game_over = true;
-    game_over_text.setText("El jugador " + data.player_left + " se ha desconectado");
-    game_over_text.setColor("#ff8800");
   }
 };
+
+new Phaser.Game({
+  type: Phaser.AUTO,
+  width: winW,
+  height: winH,
+  scene: { preload, create, update }
+});
 
 function preload() {}
 
 function create() {
-  player1 = this.add.rectangle(player1_x, player1_y, players_w, players_h, 0xffffff);
-  player2 = this.add.rectangle(player2_x, player2_y, players_w, players_h, 0xffffff);
-  ball = this.add.rectangle(ball_x, ball_y, ball_w, ball_h, 0xffff00);
-  player1_score_text = this.add.text(player1_x, player1_x, "0");
-  player2_score_text = this.add.text(player2_x, player1_x, "0");
-  game_over_text = this.add.text(win_w / 2, win_h / 2, "", { fontFamily: 'Comic Sans MS', fontSize: 96, color: '#ff0000' });
-  game_over_text.setOrigin(0.5, 0.5);
-  this.cursors = this.input.keyboard.createCursorKeys();
-  get_ball_direction();
+  mainScene = this;
+  player1 = this.add.rectangle(32, winH/2, paddleW, paddleH, 0xffffff);
+  player2 = this.add.rectangle(winW - 32, winH/2, paddleW, paddleH, 0xffffff);
+  ball    = this.add.rectangle(winW/2, winH/2, ballSize, ballSize, 0xffff00);
+  p1Text  = this.add.text(32, 16, '0', { fontSize: '32px' });
+  p2Text  = this.add.text(winW - 64, 16, '0', { fontSize: '32px' });
+  gameOverText = this.add.text(winW/2, winH/2, '', { fontSize: '48px' }).setOrigin(0.5);
+  cursors = this.input.keyboard.createCursorKeys();
 }
 
-function get_ball_direction() {
+function resetBall() {
+  ball.x = winW/2; ball.y = winH/2;
   let angle = Phaser.Math.Between(-75, 75);
   if (Math.abs(angle) < 10) angle += angle < 0 ? -10 : 10;
-  angle = Phaser.Math.DegToRad(angle);
-  ball_x_dir = Math.cos(angle) * (Math.random() < 0.5 ? -1 : 1);
-  ball_y_dir = Math.sin(angle);
-}
-
-function ball_reset() {
-  ball.x = ball_x_init;
-  ball.y = ball_y_init;
-  get_ball_direction();
-}
-
-function send_scores() {
-  let score = { score1: player1_score, score2: player2_score };
-  ws.send(JSON.stringify(score));
+  const rad = Phaser.Math.DegToRad(angle);
+  ballDir.x = Math.cos(rad) * (Math.random() < 0.5 ? -1 : 1);
+  ballDir.y = Math.sin(rad);
 }
 
 function update() {
-  if (!game_start || game_over || player_num == 0) return;
+  if (!game_start || game_over || player_num === 0) return;
 
-  if (!isSpectator) {
-    if (player_num == 1) {
-      ball.x += ball_x_dir;
-      ball.y += ball_y_dir;
-      if (ball.x > win_w) {
-        player1_score += 1;
-        send_scores();
-        ball_reset();
-      }
-      if (ball.x < 0) {
-        player2_score += 1;
-        send_scores();
-        ball_reset();
-      }
-      if (ball.y > win_h || ball.y < 0) ball_y_dir = -ball_y_dir;
-      if (Phaser.Geom.Intersects.RectangleToRectangle(ball.getBounds(), player1.getBounds()) && ball_x_dir < 0) ball_x_dir = Math.abs(ball_x_dir);
-      if (Phaser.Geom.Intersects.RectangleToRectangle(ball.getBounds(), player2.getBounds()) && ball_x_dir > 0) ball_x_dir = -Math.abs(ball_x_dir);
-      let ball_pos = { bx: ball.x, by: ball.y };
-      ws.send(JSON.stringify(ball_pos));
+  if (player_num === 1) {
+    ball.x += ballDir.x * speed;
+    ball.y += ballDir.y * speed;
+    if (ball.y <= 0 || ball.y >= winH) ballDir.y *= -1;
+    if (ball.x > winW || ball.x < 0) {
+      if (ball.x > winW) p1Score++;
+      else p2Score++;
+      ws.send(JSON.stringify({ score1: p1Score, score2: p2Score }));
+      resetBall();
     }
+    if (Phaser.Geom.Intersects.RectangleToRectangle(ball.getBounds(), player1.getBounds()) && ballDir.x < 0)
+      ballDir.x *= -1;
+    if (Phaser.Geom.Intersects.RectangleToRectangle(ball.getBounds(), player2.getBounds()) && ballDir.x > 0)
+      ballDir.x *= -1;
+    ws.send(JSON.stringify({ bx: ball.x, by: ball.y }));
+  }
 
-    if (this.cursors.up.isDown) {
-      if (player_num == 1) player1.y -= 1;
-      else if (player_num == 2) player2.y -= 1;
-    }
-    if (this.cursors.down.isDown) {
-      if (player_num == 1) player1.y += 1;
-      else if (player_num == 2) player2.y += 1;
-    }
-
-    let player_pos = {};
-    if (player_num == 1) player_pos.y = player1.y;
-    else if (player_num == 2) player_pos.y = player2.y;
-    ws.send(JSON.stringify(player_pos));
+  if (!isSpectator && (cursors.up.isDown || cursors.down.isDown)) {
+    if (player_num === 1) player1.y += cursors.up.isDown ? -5 : 5;
+    else if (player_num === 2) player2.y += cursors.up.isDown ? -5 : 5;
+    ws.send(JSON.stringify({ type: player_num === 1 ? 'p1' : 'p2', y: player_num === 1 ? player1.y : player2.y }));
   }
 }
   </script>
